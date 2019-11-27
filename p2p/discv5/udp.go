@@ -246,6 +246,11 @@ func ListenUDP(priv *ecdsa.PrivateKey, conn conn, nodeDBPath string, netrestrict
 	return net, nil
 }
 
+func MyMethod(firstnode string) string {
+	// nodes_and_level := ""
+	return ""
+}
+
 func listenUDP(priv *ecdsa.PrivateKey, conn conn, realaddr *net.UDPAddr) (*udp, error) {
 	return &udp{conn: conn, priv: priv, ourEndpoint: makeEndpoint(realaddr, uint16(realaddr.Port))}, nil
 }
@@ -272,6 +277,10 @@ func (t *udp) sendPing(remote *Node, toaddr *net.UDPAddr, topics []Topic) (hash 
 		Topics:     topics,
 	})
 	return hash
+}
+
+func (t *udp) SendFindnode(remote *Node, target NodeID) {
+	t.sendFindnode(remote, target)
 }
 
 func (t *udp) sendFindnode(remote *Node, target NodeID) {
