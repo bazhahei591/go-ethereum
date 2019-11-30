@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
+// 这是G文件，用于判断key值以便筛选是否共享
+
 // +build !js
 
 // Package leveldb implements the key-value database layer based on LevelDB.
@@ -28,6 +30,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/ethdb/redisdb"
+	_ "github.com/ethereum/go-ethereum/ethdb/redisdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -59,8 +63,10 @@ const (
 // functionality it also supports batch writes and iterating over the keyspace in
 // binary-alphabetical order.
 type Database struct {
-	fn string      // filename for reporting
-	db *leveldb.DB // LevelDB instance
+	fn string // filename for reporting
+	// rdb *
+	db  *leveldb.DB
+	rdb *redisdb.DB
 
 	compTimeMeter      metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter      metrics.Meter // Meter for measuring the data read during compaction
@@ -79,6 +85,10 @@ type Database struct {
 	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
 
 	log log.Logger // Contextual logger tracking the database path
+}
+
+func isStorageShare(key []byte) bool {
+	return false
 }
 
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
@@ -102,6 +112,10 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 		Filter:                 filter.NewBloomFilter(10),
 		DisableSeeksCompaction: true,
 	})
+	// rdb_id = 2
+	rdb := redisdb.New()
+	fmt.Println("^^^^^^^^^^^^^", file, namespace)
+
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
 		db, err = leveldb.RecoverFile(file, nil)
 	}
@@ -112,6 +126,7 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 	ldb := &Database{
 		fn:       file,
 		db:       db,
+		rdb:      rdb,
 		log:      logger,
 		quitChan: make(chan chan error),
 	}
@@ -152,6 +167,9 @@ func (db *Database) Close() error {
 
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
+	// if isStorageShare(key){
+
+	// }
 	return db.db.Has(key, nil)
 }
 
@@ -166,6 +184,10 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
+	if isStorageShare(key) {
+		return db.rdb.Set(key, value)
+
+	}
 	return db.db.Put(key, value, nil)
 }
 
