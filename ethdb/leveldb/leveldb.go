@@ -162,6 +162,7 @@ func (db *Database) Close() error {
 		}
 		db.quitChan = nil
 	}
+	db.rdb.Close()
 	return db.db.Close()
 }
 
@@ -175,6 +176,10 @@ func (db *Database) Has(key []byte) (bool, error) {
 
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
+	if isStorageShare(key) {
+		return db.rdb.Get(key)
+	}
+
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
 		return nil, err
@@ -186,7 +191,6 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 func (db *Database) Put(key []byte, value []byte) error {
 	if isStorageShare(key) {
 		return db.rdb.Set(key, value)
-
 	}
 	return db.db.Put(key, value, nil)
 }
@@ -199,9 +203,15 @@ func (db *Database) Delete(key []byte) error {
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
-	return &batch{
+	lb := lbatch{
 		db: db.db,
 		b:  new(leveldb.Batch),
+	}
+	rb := rbatch{
+
+	}
+	return &mybatch{
+		lb:lb, rb:rb
 	}
 }
 
@@ -446,45 +456,63 @@ func (db *Database) meter(refresh time.Duration) {
 
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
-type batch struct {
+type lbatch struct {
 	db   *leveldb.DB
 	b    *leveldb.Batch
 	size int
 }
+type rbatch struct {
+	rdb  *redisdb.DB
+	rb   *redisdb.Batch
+	size int
+}
+type mybatch struct {
+	lb lbatch
+	rb rbatch
+}
+
+func (m *mybatch) ValueSize() int {
+	return m.lb.size + m.rb.size
+}
 
 // Put inserts the given value into the batch for later committing.
-func (b *batch) Put(key, value []byte) error {
-	b.b.Put(key, value)
-	b.size += len(value)
+func (b *mybatch) Put(key, value []byte) error {
+	if isStorageShare(key) {
+		b.rb.Put(key, value)
+		b.rb.size += len(value)
+	} else {
+		b.lb.Put(key, value)
+		b.lb.size += len(value)
+	}
 	return nil
 }
 
 // Delete inserts the a key removal into the batch for later committing.
-func (b *batch) Delete(key []byte) error {
+func (b *mybatch) Delete(key []byte) error {
 	b.b.Delete(key)
 	b.size++
 	return nil
 }
 
 // ValueSize retrieves the amount of data queued up for writing.
-func (b *batch) ValueSize() int {
-	return b.size
-}
+// func (b *mybatch) ValueSize() int {
+// 	return b.size
+// }
 
 // Write flushes any accumulated data to disk.
-func (b *batch) Write() error {
+func (b *mybatch) Write() error {
 	return b.db.Write(b.b, nil)
 }
 
 // Reset resets the batch for reuse.
-func (b *batch) Reset() {
+func (b *mybatch) Reset() {
 	b.b.Reset()
 	b.size = 0
 }
 
 // Replay replays the batch contents.
-func (b *batch) Replay(w ethdb.KeyValueWriter) error {
-	return b.b.Replay(&replayer{writer: w})
+func (b *mybatch) Replay(w ethdb.KeyValueWriter) error {
+	return b.lb.Replay(&replayer{writer: w})
 }
 
 // replayer is a small wrapper to implement the correct replay methods.
