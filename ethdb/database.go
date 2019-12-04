@@ -17,7 +17,11 @@
 // Package ethdb defines the interfaces for an Ethereum data store.
 package ethdb
 
-import "io"
+import (
+	"io"
+
+	_ "github.com/ethereum/go-ethereum/ethdb/redisdb"
+)
 
 // KeyValueReader wraps the Has and Get method of a backing data store.
 type KeyValueReader interface {

@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/redisdb"
-	_ "github.com/ethereum/go-ethereum/ethdb/redisdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -87,6 +86,7 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
+// choose which key-value to be shared, which means use redis to store
 func isStorageShare(key []byte) bool {
 	return false
 }
@@ -114,7 +114,7 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 	})
 	// rdb_id = 2
 	rdb := redisdb.New()
-	fmt.Println("^^^^^^^^^^^^^", file, namespace)
+	// fmt.Println("^^^^^^^^^^^^^", file, namespace)
 
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
 		db, err = leveldb.RecoverFile(file, nil)
@@ -168,9 +168,9 @@ func (db *Database) Close() error {
 
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
-	// if isStorageShare(key){
-
-	// }
+	if isStorageShare(key) {
+		return db.rdb.Has(key)
+	}
 	return db.db.Has(key, nil)
 }
 
@@ -197,6 +197,9 @@ func (db *Database) Put(key []byte, value []byte) error {
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
+	if isStorageShare(key) {
+		return db.rdb.Del(key)
+	}
 	return db.db.Delete(key, nil)
 }
 
@@ -208,10 +211,11 @@ func (db *Database) NewBatch() ethdb.Batch {
 		b:  new(leveldb.Batch),
 	}
 	rb := rbatch{
-
+		rdb: db.rdb,
+		rb:  new(redisdb.Batch),
 	}
 	return &mybatch{
-		lb:lb, rb:rb
+		lb: lb, rb: rb,
 	}
 }
 
@@ -471,8 +475,8 @@ type mybatch struct {
 	rb rbatch
 }
 
-func (m *mybatch) ValueSize() int {
-	return m.lb.size + m.rb.size
+func (b *mybatch) ValueSize() int {
+	return b.lb.size + b.rb.size
 }
 
 // Put inserts the given value into the batch for later committing.
@@ -489,25 +493,20 @@ func (b *mybatch) Put(key, value []byte) error {
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *mybatch) Delete(key []byte) error {
-	if isStorageShare(key){
-		b.rb.rb.Del(key)
-		b.rb.size ++
-	}else{
+	if isStorageShare(key) {
+		b.rb.rb.Delete(key)
+		b.rb.size++
+	} else {
 		b.lb.b.Delete(key)
 		b.lb.size++
 	}
 	return nil
 }
 
-// ValueSize retrieves the amount of data queued up for writing.
-// func (b *mybatch) ValueSize() int {
-// 	return b.size
-// }
-
 // Write flushes any accumulated data to disk.
 func (b *mybatch) Write() error {
 	b.rb.rb.Write()
-	return b.lb.db.Write(b.b, nil)
+	return b.lb.db.Write(b.lb.b, nil)
 	//这里写的没有返回err，这个函数只返回了leveldb的err返回值，没有redis的
 }
 
@@ -521,7 +520,7 @@ func (b *mybatch) Reset() {
 
 // Replay replays the batch contents.
 func (b *mybatch) Replay(w ethdb.KeyValueWriter) error {
-	b.rb.rb.Replay(w)//加上rb的
+	b.rb.rb.Replay(w) //加上rb的
 	return b.lb.b.Replay(&replayer{writer: w})
 }
 
