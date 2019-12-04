@@ -478,10 +478,10 @@ func (m *mybatch) ValueSize() int {
 // Put inserts the given value into the batch for later committing.
 func (b *mybatch) Put(key, value []byte) error {
 	if isStorageShare(key) {
-		b.rb.Put(key, value)
+		b.rb.rb.Put(key, value)
 		b.rb.size += len(value)
 	} else {
-		b.lb.Put(key, value)
+		b.lb.b.Put(key, value)
 		b.lb.size += len(value)
 	}
 	return nil
@@ -489,8 +489,13 @@ func (b *mybatch) Put(key, value []byte) error {
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *mybatch) Delete(key []byte) error {
-	b.b.Delete(key)
-	b.size++
+	if isStorageShare(key){
+		b.rb.rb.Del(key)
+		b.rb.size ++
+	}else{
+		b.lb.b.Delete(key)
+		b.lb.size++
+	}
 	return nil
 }
 
@@ -501,18 +506,23 @@ func (b *mybatch) Delete(key []byte) error {
 
 // Write flushes any accumulated data to disk.
 func (b *mybatch) Write() error {
-	return b.db.Write(b.b, nil)
+	b.rb.rb.Write()
+	return b.lb.db.Write(b.b, nil)
+	//这里写的没有返回err，这个函数只返回了leveldb的err返回值，没有redis的
 }
 
 // Reset resets the batch for reuse.
 func (b *mybatch) Reset() {
-	b.b.Reset()
-	b.size = 0
+	b.lb.b.Reset()
+	b.rb.rb.Reset()
+	b.lb.size = 0
+	b.rb.size = 0
 }
 
 // Replay replays the batch contents.
 func (b *mybatch) Replay(w ethdb.KeyValueWriter) error {
-	return b.lb.Replay(&replayer{writer: w})
+	b.rb.rb.Replay(w)//加上rb的
+	return b.lb.b.Replay(&replayer{writer: w})
 }
 
 // replayer is a small wrapper to implement the correct replay methods.

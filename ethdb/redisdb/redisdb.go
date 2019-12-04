@@ -8,14 +8,14 @@ import (
 
 type BatchItem struct {
 	command string
-	key []byte
-	value [] byte
+	key     []byte
+	value   []byte
 }
 
-type Batch struct{
-	l  []BatchItem
+type Batch struct {
+	l []BatchItem
 	c redis.Conn
-} 
+}
 
 // BatchReplay wraps basic batch operations.
 type BatchReplay interface {
@@ -34,31 +34,35 @@ func (b *Batch) Replay(r BatchReplay) error {
 	// 	}
 	// }
 	for _, item := range b.l {
-		if item.command == "SET"{
+		if item.command == "SET" {
 			r.Put(item.key, item.value)
 		}
-		if item.command == "DEL"{
+		if item.command == "DEL" {
 			r.Delete(item.key)
 		}
 	}
 	return nil
 }
 
-func NewBatch(c redis.Conn) *Batch{
-	b:=Batch{c: c}
-	b.l = make([]BatchItem)
+func NewBatch(c redis.Conn) *Batch {
+	b := Batch{c: c}
+	b.l = make([]BatchItem，0)
 	return &b
 }
 
-func (b *Batch)Put(key []byte, value []byte) {
-	append(b.l , BatchItem{command: "SET", key: key, value: value})
+func (b *Batch) Put(key []byte, value []byte) {
+	append(b.l, BatchItem{command: "SET", key: key, value: value})
 }
 
-func (b *Batch) Write (){
+func (b *Batch) Write() {
 	for _, it := range b.l {
 		b.c.Do(it.command, it.key, it.value)
 	}
 	// b.l = //empty
+}
+
+func (b *Batch) Reset() {
+//empty
 }
 
 type DB struct {
@@ -113,5 +117,3 @@ func (d *DB) Del(key []byte) error {
 // func (d *DB) Compact (){
 // 	//TODO
 // }
-
-func (d *DB) 
