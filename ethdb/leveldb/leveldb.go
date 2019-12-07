@@ -22,6 +22,7 @@
 package leveldb
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -88,6 +89,7 @@ type Database struct {
 
 // choose which key-value to be shared, which means use redis to store
 func isStorageShare(key []byte) bool {
+	//TODO
 	return false
 }
 
@@ -219,10 +221,71 @@ func (db *Database) NewBatch() ethdb.Batch {
 	}
 }
 
+// combIter contains l and r which represents leveldb Iterator and redisdb Iterator,
+// and also the key and value of the current Iterator to be returned.
+type combIter struct {
+	l     ethdb.Iterator
+	r     ethdb.Iterator
+	key   []byte
+	value []byte
+}
+
+func newCombIter(l, r ethdb.Iterator) *combIter {
+	c := combIter{
+		l: l,
+		r: r,
+	}
+	c.Next()
+	return &c
+}
+
+// Next is the Next function for combIter, current key to be returned
+// considered both redis and leveldb
+func (c *combIter) Next() bool {
+	if bytes.Compare(c.l.Key(), c.r.Key()) == -1 { //<
+		c.key = c.l.Key()
+		c.value = c.l.Value()
+		c.l.Next()
+	} else {
+		c.key = c.r.Key()
+		c.value = c.r.Value()
+		c.r.Next()
+	}
+	//TODO : after r/l end
+	return true
+}
+
+// Error returns any accumulated error.
+func (c *combIter) Error() error {
+	return c.l.Error()
+}
+
+// Key returns the key of the current key/value pair, or nil if done.
+func (c *combIter) Key() []byte {
+	return c.key
+}
+
+// Value returns the value of the current key/value pair, or nil if done.
+func (c *combIter) Value() []byte {
+	return c.value
+}
+
+// Release releases associated resources.
+func (c *combIter) Release() {
+	c.l.Release()
+	c.r.Release()
+}
+
 // NewIterator creates a binary-alphabetical iterator over the entire keyspace
 // contained within the leveldb database.
 func (db *Database) NewIterator() ethdb.Iterator {
-	return db.db.NewIterator(new(util.Range), nil)
+
+	//redis return
+	redisdbIter := db.rdb.NewIterator()
+	//leveldb return
+	leveldbIter := db.db.NewIterator(new(util.Range), nil)
+	//combine
+	return newCombIter(leveldbIter, redisIter)
 }
 
 // NewIteratorWithStart creates a binary-alphabetical iterator over a subset of
