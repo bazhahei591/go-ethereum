@@ -114,6 +114,7 @@ func (d *DB) Has(key []byte) (bool, error) {
 // Set inserts the given value into the key-value store.
 func (d *DB) Set(key []byte, value []byte) error {
 	_, err := d.c.Do("SET", key, value)
+	d.c.Do("SADD", "gs", key)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
 		return err
@@ -134,11 +135,131 @@ func (d *DB) Get(key []byte) ([]byte, error) {
 // Del removes the key from the key-value data store.
 func (d *DB) Del(key []byte) error {
 	_, err := d.c.Do("DEL", key)
+	d.c.Do("SREM", "gs", key)
 	if err != nil {
 		fmt.Println("redis delete failed:", err)
 		return err
 	}
 	return err
+}
+
+// RedisIterator structure contains keys array and index for keys
+type RedisIterator struct {
+	keysCache   [][]byte
+	index       int
+	redisClient redis.Conn
+}
+
+// NewRedisIterator return RedisIterator
+func NewRedisIterator() *RedisIterator {
+	it := new(RedisIterator)
+	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	if err != nil {
+		fmt.Println("connect redis error :", err)
+		return nil
+	}
+	it.redisClient = c
+	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
+	keys := rtn.([]interface{})
+	for i := 0; i < len(keys); i++ {
+		it.keysCache[i] = keys[i].([]byte)
+	}
+	return it
+}
+
+// NewRedisIteratorWithStart return RedisIterator
+func NewRedisIteratorWithStart(start []byte) *RedisIterator {
+	it := new(RedisIterator)
+	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	if err != nil {
+		fmt.Println("connect redis error :", err)
+		return nil
+	}
+	it.redisClient = c
+	k := 0
+	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
+	keys := rtn.([]interface{}) //强制转换
+	for i := 0; i < len(keys); i++ {
+		if bytes.Compare(keys[i].([]byte), start) != 1 {
+			it.keysCache[k] = keys[i].([]byte)
+			k++
+		}
+	}
+	return it
+}
+
+// NewRedisIteratorWithStartandLimit returns the keys from start (included) to limit (not included)
+func NewRedisIteratorWithStartandLimit(start []byte, limit []byte) *RedisIterator {
+	it := new(RedisIterator)
+	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	if err != nil {
+		fmt.Println("connect redis error :", err)
+		return nil
+	}
+	it.redisClient = c
+	k := 0
+	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
+	keys := rtn.([]interface{}) //强制转换
+	for i := 0; i < len(keys); i++ {
+		if bytes.Compare(keys[i].([]byte), start) != 1 {
+			if bytes.Compare(keys[i].([]byte), limit) == -1 {
+				it.keysCache[k] = keys[i].([]byte)
+				k++
+			}
+		}
+	}
+	return it
+}
+
+// NewRedisIteratorWithPrefix creates a binary-alphabetical iterator over a subset
+// of database content with a particular key prefix.
+func NewRedisIteratorWithPrefix(prefix []byte) *RedisIterator {
+	it := new(RedisIterator)
+	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	if err != nil {
+		fmt.Println("connect redis error :", err)
+		return nil
+	}
+	it.redisClient = c
+	k := 0
+	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
+	keys := rtn.([]interface{}) //强制转换
+	for i := 0; i < len(keys); i++ {
+		if bytes.HasPrefix(keys[i].([]byte), prefix) {
+			it.keysCache[k] = keys[i].([]byte)
+			k++
+		}
+	}
+	return it
+}
+
+// Next returns whether there is a next key in Iterator
+func (it *RedisIterator) Next() bool {
+	it.index++
+	return it.index >= len(it.keysCache)
+}
+
+// Key returns the current key of the key/value pair in Iterator
+func (it *RedisIterator) Key() []byte {
+	return it.keysCache[it.index]
+}
+
+// Values returns the current value of the key/value pair in Iterator
+func (it *RedisIterator) Values() []byte {
+	v, _ := it.redisClient.Do("GET", it.Key())
+	return v.([]byte)
+}
+
+// Release releases associated resources
+func (it *RedisIterator) Release() {
+	it.keysCache = make([][]byte, 0)
+	it.index = 0
+	it.redisClient.Close()
+}
+
+// Error returns error (nil)
+func (it *RedisIterator) Error() error {
+	return nil
 }
 
 // func (d *DB) Compact (){

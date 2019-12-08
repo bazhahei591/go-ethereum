@@ -281,24 +281,31 @@ func (c *combIter) Release() {
 func (db *Database) NewIterator() ethdb.Iterator {
 
 	//redis return
-	redisdbIter := db.rdb.NewIterator()
+	redisdbIter := redisdb.NewRedisIterator()
 	//leveldb return
 	leveldbIter := db.db.NewIterator(new(util.Range), nil)
 	//combine
-	return newCombIter(leveldbIter, redisIter)
+	return newCombIter(leveldbIter, redisdbIter)
 }
 
 // NewIteratorWithStart creates a binary-alphabetical iterator over a subset of
 // database content starting at a particular initial key (or after, if it does
 // not exist).
 func (db *Database) NewIteratorWithStart(start []byte) ethdb.Iterator {
-	return db.db.NewIterator(&util.Range{Start: start}, nil)
+
+	redisdbIter := redisdb.NewRedisIteratorWithStart(start)
+	leveldbIter := db.db.NewIterator(&util.Range{Start: start}, nil)
+
+	return newCombIter(leveldbIter, redisdbIter)
 }
 
 // NewIteratorWithPrefix creates a binary-alphabetical iterator over a subset
 // of database content with a particular key prefix.
 func (db *Database) NewIteratorWithPrefix(prefix []byte) ethdb.Iterator {
-	return db.db.NewIterator(util.BytesPrefix(prefix), nil)
+
+	redisdbIter := redisdb.NewRedisIteratorWithPrefix(prefix)
+	leveldbIter := db.db.NewIterator(util.BytesPrefix(prefix), nil)
+	return newCombIter(leveldbIter, redisdbIter)
 }
 
 // Stat returns a particular internal stat of the database.
