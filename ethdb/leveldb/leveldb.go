@@ -87,10 +87,78 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
+var (
+	// databaseVerisionKey tracks the current database version.
+	databaseVerisionKey = []byte("DatabaseVersion")
+
+	// headHeaderKey tracks the latest known header's hash.
+	headHeaderKey = []byte("LastHeader")
+
+	// headBlockKey tracks the latest known full block's hash.
+	headBlockKey = []byte("LastBlock")
+
+	// headFastBlockKey tracks the latest known incomplete block's hash during fast sync.
+	headFastBlockKey = []byte("LastFast")
+
+	// fastTrieProgressKey tracks the number of trie entries imported during fast sync.
+	fastTrieProgressKey = []byte("TrieSync")
+
+	// Data item prefixes (use single byte to avoid mixing data types, avoid `i`, used for indexes).
+	headerPrefix       = []byte("h") // headerPrefix + num (uint64 big endian) + hash -> header
+	headerTDSuffix     = []byte("t") // headerPrefix + num (uint64 big endian) + hash + headerTDSuffix -> td
+	headerHashSuffix   = []byte("n") // headerPrefix + num (uint64 big endian) + headerHashSuffix -> hash
+	headerNumberPrefix = []byte("H") // headerNumberPrefix + hash -> num (uint64 big endian)
+
+	blockBodyPrefix     = []byte("b") // blockBodyPrefix + num (uint64 big endian) + hash -> block body
+	blockReceiptsPrefix = []byte("r") // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
+
+	txLookupPrefix  = []byte("l") // txLookupPrefix + hash -> transaction/receipt lookup metadata
+	bloomBitsPrefix = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
+
+	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
+	configPrefix   = []byte("ethereum-config-") // config prefix for the db
+
+	// Chain index prefixes (use `i` + single byte to avoid mixing data types).
+
+	// BloomBitsIndexPrefix is the data table of a chain indexer to track its progress
+	BloomBitsIndexPrefix = []byte("iB")
+
+	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
+	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
+)
+
 // choose which key-value to be shared, which means use redis to store
 func isStorageShare(key []byte) bool {
-	//TODO
-	return false
+	switch {
+	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
+		return true
+	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
+		return true
+	case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, preimagePrefix) && len(key) == (len(preimagePrefix)+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
+		return true
+	case bytes.HasPrefix(key, []byte("clique-")) && len(key) == 7+common.HashLength:
+		return true
+	case bytes.HasPrefix(key, []byte("cht-")) && len(key) == 4+common.HashLength:
+		return true
+	case bytes.HasPrefix(key, []byte("blt-")) && len(key) == 4+common.HashLength:
+		return true
+	case len(key) == common.HashLength:
+		return true
+	default:
+		return false
+	}
 }
 
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
@@ -281,7 +349,7 @@ func (c *combIter) Release() {
 func (db *Database) NewIterator() ethdb.Iterator {
 
 	//redis return
-	redisdbIter := redisdb.NewRedisIterator()
+	redisdbIter := redisdb.NewRedisIterator(nil, nil)
 	//leveldb return
 	leveldbIter := db.db.NewIterator(new(util.Range), nil)
 	//combine
@@ -293,7 +361,7 @@ func (db *Database) NewIterator() ethdb.Iterator {
 // not exist).
 func (db *Database) NewIteratorWithStart(start []byte) ethdb.Iterator {
 
-	redisdbIter := redisdb.NewRedisIteratorWithStart(start)
+	redisdbIter := redisdb.NewRedisIterator(start, nil)
 	leveldbIter := db.db.NewIterator(&util.Range{Start: start}, nil)
 
 	return newCombIter(leveldbIter, redisdbIter)

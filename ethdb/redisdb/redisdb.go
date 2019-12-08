@@ -150,25 +150,8 @@ type RedisIterator struct {
 	redisClient redis.Conn
 }
 
-// NewRedisIterator return RedisIterator
-func NewRedisIterator() *RedisIterator {
-	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
-	if err != nil {
-		fmt.Println("connect redis error :", err)
-		return nil
-	}
-	it.redisClient = c
-	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
-	keys := rtn.([]interface{})
-	for i := 0; i < len(keys); i++ {
-		it.keysCache[i] = keys[i].([]byte)
-	}
-	return it
-}
-
-// NewRedisIteratorWithStart return RedisIterator
-func NewRedisIteratorWithStart(start []byte) *RedisIterator {
+// NewRedisIterator returns the keys from start (included) to limit (not included)
+func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
 	it := new(RedisIterator)
 	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
@@ -179,30 +162,10 @@ func NewRedisIteratorWithStart(start []byte) *RedisIterator {
 	k := 0
 	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
 	keys := rtn.([]interface{}) //强制转换
+	var emptyByte []byte
 	for i := 0; i < len(keys); i++ {
 		if bytes.Compare(keys[i].([]byte), start) != 1 {
-			it.keysCache[k] = keys[i].([]byte)
-			k++
-		}
-	}
-	return it
-}
-
-// NewRedisIteratorWithStartandLimit returns the keys from start (included) to limit (not included)
-func NewRedisIteratorWithStartandLimit(start []byte, limit []byte) *RedisIterator {
-	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
-	if err != nil {
-		fmt.Println("connect redis error :", err)
-		return nil
-	}
-	it.redisClient = c
-	k := 0
-	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
-	keys := rtn.([]interface{}) //强制转换
-	for i := 0; i < len(keys); i++ {
-		if bytes.Compare(keys[i].([]byte), start) != 1 {
-			if bytes.Compare(keys[i].([]byte), limit) == -1 {
+			if limit == nil || bytes.Equal(limit, emptyByte) || bytes.Compare(keys[i].([]byte), limit) == -1 {
 				it.keysCache[k] = keys[i].([]byte)
 				k++
 			}
@@ -214,23 +177,23 @@ func NewRedisIteratorWithStartandLimit(start []byte, limit []byte) *RedisIterato
 // NewRedisIteratorWithPrefix creates a binary-alphabetical iterator over a subset
 // of database content with a particular key prefix.
 func NewRedisIteratorWithPrefix(prefix []byte) *RedisIterator {
-	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
-	if err != nil {
-		fmt.Println("connect redis error :", err)
-		return nil
-	}
-	it.redisClient = c
-	k := 0
-	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
-	keys := rtn.([]interface{}) //强制转换
-	for i := 0; i < len(keys); i++ {
-		if bytes.HasPrefix(keys[i].([]byte), prefix) {
-			it.keysCache[k] = keys[i].([]byte)
-			k++
+	return NewRedisIterator(prefix, bytesPrefix(prefix))
+}
+
+// BytesPrefix returns key range that satisfy the given prefix.
+// This only applicable for the standard 'bytes comparer'.
+func bytesPrefix(prefix []byte) []byte {
+	var limit []byte
+	for i := len(prefix) - 1; i >= 0; i-- {
+		c := prefix[i]
+		if c < 0xff {
+			limit = make([]byte, i+1)
+			copy(limit, prefix)
+			limit[i] = c + 1
+			break
 		}
 	}
-	return it
+	return limit
 }
 
 // Next returns whether there is a next key in Iterator
