@@ -127,6 +127,15 @@ func (d *DB) Has(key []byte) (bool, error) {
 
 // Set inserts the given value into the key-value store.
 func (d *DB) Set(key []byte, value []byte) error {
+	if d.c.Err() != nil {
+		c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
+		if err != nil {
+			logrus.WithField("err", err).Error("ReDial Error")
+		} else {
+			logrus.Warning("ReDial Succeed")
+		}
+		d.c = c
+	}
 	_, err := d.c.Do("SET", key, value)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
@@ -144,8 +153,7 @@ func (d *DB) Set(key []byte, value []byte) error {
 func (d *DB) Get(key []byte) ([]byte, error) {
 	value, err := redis.Bytes(d.c.Do("GET", key))
 	if err != nil {
-		// fmt.Printf("redis get %s failed: %s", key, err)
-		return nil, err
+		return nil, nil
 	}
 	return value, nil
 }
@@ -181,6 +189,7 @@ func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
 	k := 0
 
 	keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", "gs", "ALPHA"))
+	// keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", "gs", "ALPHA","limit",it.index?,"1"))
 	var emptyByte []byte
 	for i := 0; i < len(keys); i++ {
 		if bytes.Compare(keys[i], start) != 1 {

@@ -23,6 +23,7 @@ package leveldb
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -248,6 +249,11 @@ func (db *Database) Has(key []byte) (bool, error) {
 
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
+	logrus.WithFields(logrus.Fields{
+		"prefix": string(key[0]),
+		"shared": isStorageShare(key),
+		"key":    string(hex.EncodeToString(key)),
+	}).Trace("DatabaseGet")
 	if isStorageShare(key) {
 		return db.rdb.Get(key)
 	}
@@ -266,6 +272,7 @@ func (db *Database) Put(key []byte, value []byte) error {
 		"len(key)":   len(key),
 		"len(value)": len(value),
 		"shared":     isStorageShare(key),
+		"key":        string(hex.EncodeToString(key)),
 	}).Debug("DatabaseSet")
 	if isStorageShare(key) {
 		return db.rdb.Set(key, value)
@@ -275,6 +282,11 @@ func (db *Database) Put(key []byte, value []byte) error {
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
+	logrus.WithFields(logrus.Fields{
+		"prefix": string(key[0]),
+		"shared": isStorageShare(key),
+		"key":    string(hex.EncodeToString(key)),
+	}).Debug("DatabaseDelete")
 	if isStorageShare(key) {
 		return db.rdb.Del(key)
 	}
