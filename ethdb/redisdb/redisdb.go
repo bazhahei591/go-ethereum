@@ -91,7 +91,7 @@ type DB struct {
 
 // New returns a wrapped redisDB object.
 func New() *DB {
-	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0))
+	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -153,7 +153,7 @@ type RedisIterator struct {
 // NewRedisIterator return RedisIterator
 func NewRedisIterator() *RedisIterator {
 	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -170,7 +170,7 @@ func NewRedisIterator() *RedisIterator {
 // NewRedisIteratorWithStart return RedisIterator
 func NewRedisIteratorWithStart(start []byte) *RedisIterator {
 	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -191,7 +191,7 @@ func NewRedisIteratorWithStart(start []byte) *RedisIterator {
 // NewRedisIteratorWithStartandLimit returns the keys from start (included) to limit (not included)
 func NewRedisIteratorWithStartandLimit(start []byte, limit []byte) *RedisIterator {
 	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -215,7 +215,7 @@ func NewRedisIteratorWithStartandLimit(start []byte, limit []byte) *RedisIterato
 // of database content with a particular key prefix.
 func NewRedisIteratorWithPrefix(prefix []byte) *RedisIterator {
 	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:6379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -244,8 +244,8 @@ func (it *RedisIterator) Key() []byte {
 	return it.keysCache[it.index]
 }
 
-// Values returns the current value of the key/value pair in Iterator
-func (it *RedisIterator) Values() []byte {
+// Value returns the current value of the key/value pair in Iterator
+func (it *RedisIterator) Value() []byte {
 	v, _ := it.redisClient.Do("GET", it.Key())
 	return v.([]byte)
 }
