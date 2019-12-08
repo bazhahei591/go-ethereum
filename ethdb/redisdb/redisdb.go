@@ -71,9 +71,11 @@ func (b *Batch) Write() {
 	for _, it := range b.l {
 		if it.command == "DEL" {
 			b.c.Do(it.command, it.key)
+			b.c.Do("SREM", "gs", it.key)
 			dc++
 		} else {
 			b.c.Do(it.command, it.key, it.value)
+			b.c.Do("SADD", "gs", it.key)
 			sc++
 		}
 	}
