@@ -29,6 +29,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/redisdb"
@@ -58,34 +60,6 @@ const (
 	// compaction, io and pause stats to report to the user.
 	metricsGatheringInterval = 3 * time.Second
 )
-
-// Database is a persistent key-value store. Apart from basic data storage
-// functionality it also supports batch writes and iterating over the keyspace in
-// binary-alphabetical order.
-type Database struct {
-	fn string // filename for reporting
-	// rdb *
-	db  *leveldb.DB
-	rdb *redisdb.DB
-
-	compTimeMeter      metrics.Meter // Meter for measuring the total time spent in database compaction
-	compReadMeter      metrics.Meter // Meter for measuring the data read during compaction
-	compWriteMeter     metrics.Meter // Meter for measuring the data written during compaction
-	writeDelayNMeter   metrics.Meter // Meter for measuring the write delay number due to database compaction
-	writeDelayMeter    metrics.Meter // Meter for measuring the write delay duration due to database compaction
-	diskSizeGauge      metrics.Gauge // Gauge for tracking the size of all the levels in the database
-	diskReadMeter      metrics.Meter // Meter for measuring the effective amount of data read
-	diskWriteMeter     metrics.Meter // Meter for measuring the effective amount of data written
-	memCompGauge       metrics.Gauge // Gauge for tracking the number of memory compaction
-	level0CompGauge    metrics.Gauge // Gauge for tracking the number of table compaction in level0
-	nonlevel0CompGauge metrics.Gauge // Gauge for tracking the number of table compaction in non0 level
-	seekCompGauge      metrics.Gauge // Gauge for tracking the number of table compaction caused by read opt
-
-	quitLock sync.Mutex      // Mutex protecting the quit channel access
-	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
-
-	log log.Logger // Contextual logger tracking the database path
-}
 
 var (
 	// databaseVerisionKey tracks the current database version.
@@ -159,6 +133,34 @@ func isStorageShare(key []byte) bool {
 	default:
 		return false
 	}
+}
+
+// Database is a persistent key-value store. Apart from basic data storage
+// functionality it also supports batch writes and iterating over the keyspace in
+// binary-alphabetical order.
+type Database struct {
+	fn string // filename for reporting
+	// rdb *
+	db  *leveldb.DB
+	rdb *redisdb.DB
+
+	compTimeMeter      metrics.Meter // Meter for measuring the total time spent in database compaction
+	compReadMeter      metrics.Meter // Meter for measuring the data read during compaction
+	compWriteMeter     metrics.Meter // Meter for measuring the data written during compaction
+	writeDelayNMeter   metrics.Meter // Meter for measuring the write delay number due to database compaction
+	writeDelayMeter    metrics.Meter // Meter for measuring the write delay duration due to database compaction
+	diskSizeGauge      metrics.Gauge // Gauge for tracking the size of all the levels in the database
+	diskReadMeter      metrics.Meter // Meter for measuring the effective amount of data read
+	diskWriteMeter     metrics.Meter // Meter for measuring the effective amount of data written
+	memCompGauge       metrics.Gauge // Gauge for tracking the number of memory compaction
+	level0CompGauge    metrics.Gauge // Gauge for tracking the number of table compaction in level0
+	nonlevel0CompGauge metrics.Gauge // Gauge for tracking the number of table compaction in non0 level
+	seekCompGauge      metrics.Gauge // Gauge for tracking the number of table compaction caused by read opt
+
+	quitLock sync.Mutex      // Mutex protecting the quit channel access
+	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
+
+	log log.Logger // Contextual logger tracking the database path
 }
 
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
@@ -259,6 +261,12 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
+	logrus.WithFields(logrus.Fields{
+		"perfix":     string(key[0]),
+		"len(key)":   len(key),
+		"len(value)": len(value),
+		"shared":     isStorageShare(key),
+	}).Debug("DatabaseSet")
 	if isStorageShare(key) {
 		return db.rdb.Set(key, value)
 	}
@@ -282,7 +290,7 @@ func (db *Database) NewBatch() ethdb.Batch {
 	}
 	rb := rbatch{
 		rdb: db.rdb,
-		rb:  new(redisdb.Batch),
+		rb:  db.rdb.NewBatch(),
 	}
 	return &mybatch{
 		lb: lb, rb: rb,
@@ -296,6 +304,9 @@ type combIter struct {
 	r     ethdb.Iterator
 	key   []byte
 	value []byte
+	rand  int
+	lEnd  bool
+	rEnd  bool
 }
 
 func newCombIter(l, r ethdb.Iterator) *combIter {
@@ -310,17 +321,29 @@ func newCombIter(l, r ethdb.Iterator) *combIter {
 // Next is the Next function for combIter, current key to be returned
 // considered both redis and leveldb
 func (c *combIter) Next() bool {
+	if c.lEnd && c.rEnd {
+		return true
+	}
+	if c.lEnd {
+		c.key = c.r.Key()
+		c.value = c.r.Value()
+		return c.r.Next()
+	}
+	if c.rEnd {
+		c.key = c.l.Key()
+		c.value = c.l.Value()
+		return c.l.Next()
+	}
 	if bytes.Compare(c.l.Key(), c.r.Key()) == -1 { //<
 		c.key = c.l.Key()
 		c.value = c.l.Value()
-		c.l.Next()
+		c.lEnd = c.l.Next()
 	} else {
 		c.key = c.r.Key()
 		c.value = c.r.Value()
-		c.r.Next()
+		c.rEnd = c.r.Next()
 	}
-	//TODO : after r/l end
-	return true
+	return false
 }
 
 // Error returns any accumulated error.

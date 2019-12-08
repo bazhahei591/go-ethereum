@@ -3,9 +3,14 @@ package redisdb
 import (
 	"bytes"
 	"fmt"
+	"os"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/sirupsen/logrus"
 )
+
+const redisServer = "127.0.0.1:6379"
+const redisPass = "gaojiachenisbazhahei"
 
 // BatchItem is the structure of redis command items
 type BatchItem struct {
@@ -24,6 +29,14 @@ type Batch struct {
 type BatchReplay interface {
 	Put(key []byte, value []byte) error
 	Delete(key []byte) error
+}
+
+// NewBatch creates a write-only key-value store that buffers changes to its host
+// database until a final write is called.
+func (d *DB) NewBatch() *Batch {
+	b := Batch{c: d.c}
+	b.l = make([]BatchItem, 0)
+	return &b
 }
 
 // Replay replays batch contents.
@@ -47,14 +60,6 @@ func (b *Batch) Replay(r BatchReplay) error {
 	return nil
 }
 
-// NewBatch creates a write-only key-value store that buffers changes to its host
-// database until a final write is called.
-func NewBatch(c redis.Conn) *Batch {
-	b := Batch{c: c}
-	b.l = make([]BatchItem, 0)
-	return &b
-}
-
 // Put inserts the given value into the batch for later committing.
 func (b *Batch) Put(key []byte, value []byte) error {
 	b.l = append(b.l, BatchItem{command: "SET", key: key, value: value})
@@ -62,11 +67,22 @@ func (b *Batch) Put(key []byte, value []byte) error {
 }
 
 func (b *Batch) Write() {
+	dc, sc := 0, 0
 	for _, it := range b.l {
-		b.c.Do(it.command, it.key, it.value)
+		if it.command == "DEL" {
+			b.c.Do(it.command, it.key)
+			dc++
+		} else {
+			b.c.Do(it.command, it.key, it.value)
+			sc++
+		}
 	}
 	b.l = b.l[0:0]
 	// b.l = //empty
+	logrus.WithFields(logrus.Fields{
+		"set": sc,
+		"del": dc,
+	}).Debug("RedisBatchWrite")
 }
 
 // Reset resets the batch for reuse.
@@ -76,11 +92,7 @@ func (b *Batch) Reset() {
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *Batch) Delete(key []byte) error {
-	for _, it := range b.l {
-		if !bytes.Equal(it.key, key) {
-			b.l = append(b.l, it)
-		}
-	}
+	b.l = append(b.l, BatchItem{command: "DEL", key: key})
 	return nil
 }
 
@@ -91,7 +103,7 @@ type DB struct {
 
 // New returns a wrapped redisDB object.
 func New() *DB {
-	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
@@ -102,7 +114,9 @@ func New() *DB {
 // Close stops the metrics collection, flushes any pending data to disk and closes
 // all io accesses to the underlying key-value store.
 func (d *DB) Close() error {
-	return d.c.Close()
+	// never close
+	return nil
+	// return d.c.Close()
 }
 
 // Has retrieves if a key is present in the key-value store.
@@ -114,7 +128,11 @@ func (d *DB) Has(key []byte) (bool, error) {
 // Set inserts the given value into the key-value store.
 func (d *DB) Set(key []byte, value []byte) error {
 	_, err := d.c.Do("SET", key, value)
-	d.c.Do("SADD", "gs", key)
+	if err != nil {
+		fmt.Println("redis set failed:", err)
+		return err
+	}
+	_, err = d.c.Do("SADD", "gs", key)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
 		return err
@@ -126,7 +144,7 @@ func (d *DB) Set(key []byte, value []byte) error {
 func (d *DB) Get(key []byte) ([]byte, error) {
 	value, err := redis.Bytes(d.c.Do("GET", key))
 	if err != nil {
-		fmt.Println("redis get failed:", err)
+		// fmt.Printf("redis get %s failed: %s", key, err)
 		return nil, err
 	}
 	return value, nil
@@ -152,21 +170,22 @@ type RedisIterator struct {
 
 // NewRedisIterator returns the keys from start (included) to limit (not included)
 func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
+	logrus.Debug("RedisNewIterator")
 	it := new(RedisIterator)
-	c, err := redis.Dial("tcp", "127.0.0.1:16379", redis.DialDatabase(0), redis.DialPassword("gaojiachenisbazhahei"))
+	c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
 	if err != nil {
 		fmt.Println("connect redis error :", err)
 		return nil
 	}
 	it.redisClient = c
 	k := 0
-	rtn, _ := it.redisClient.Do("SORT", "gs", "ALPHA")
-	keys := rtn.([]interface{}) //强制转换
+
+	keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", "gs", "ALPHA"))
 	var emptyByte []byte
 	for i := 0; i < len(keys); i++ {
-		if bytes.Compare(keys[i].([]byte), start) != 1 {
-			if limit == nil || bytes.Equal(limit, emptyByte) || bytes.Compare(keys[i].([]byte), limit) == -1 {
-				it.keysCache[k] = keys[i].([]byte)
+		if bytes.Compare(keys[i], start) != 1 {
+			if limit == nil || bytes.Equal(limit, emptyByte) || bytes.Compare(keys[i], limit) == -1 {
+				it.keysCache[k] = keys[i]
 				k++
 			}
 		}
@@ -199,16 +218,29 @@ func bytesPrefix(prefix []byte) []byte {
 // Next returns whether there is a next key in Iterator
 func (it *RedisIterator) Next() bool {
 	it.index++
+	logrus.WithFields(logrus.Fields{
+		"index": it.index,
+		"key":   it.Key(),
+	}).Trace("RedisIteratorNext")
+	if it.index > 100 {
+		os.Exit(1)
+	}
 	return it.index >= len(it.keysCache)
 }
 
 // Key returns the current key of the key/value pair in Iterator
 func (it *RedisIterator) Key() []byte {
+	if len(it.keysCache) == 0 {
+		return []byte{}
+	}
 	return it.keysCache[it.index]
 }
 
 // Value returns the current value of the key/value pair in Iterator
 func (it *RedisIterator) Value() []byte {
+	if len(it.keysCache) == 0 {
+		return []byte{}
+	}
 	v, _ := it.redisClient.Do("GET", it.Key())
 	return v.([]byte)
 }
