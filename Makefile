@@ -11,11 +11,7 @@
 GOBIN = ./build/bin
 GO ?= latest
 
-mydep:
-	mkdir -p /Users/jc/go/src/github.com/ethereum/go-ethereum/build/_workspace/src/github.com/gomodule/redigo/redis
-	cp -r /Users/jc/go/src/github.com/gomodule/redigo/redis /Users/jc/go/src/github.com/ethereum/go-ethereum/build/_workspace/src/github.com/gomodule/redigo/
-
-geth: mydep
+geth:
 	build/env.sh go run build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
