@@ -18,7 +18,6 @@ package rawdb
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"time"
 
@@ -33,24 +32,59 @@ import (
 // freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
 	ethdb.KeyValueStore
-	ethdb.AncientStore
+	// ethdb.AncientStore
 }
 
-// Close implements io.Closer, closing both the fast key-value store as well as
-// the slow ancient tables.
-func (frdb *freezerdb) Close() error {
-	var errs []error
-	if err := frdb.KeyValueStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if err := frdb.AncientStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if len(errs) != 0 {
-		return fmt.Errorf("%v", errs)
-	}
-	return nil
+// HasAncient returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) HasAncient(kind string, number uint64) (bool, error) {
+	return false, errNotSupported
 }
+
+// Ancient returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) Ancient(kind string, number uint64) ([]byte, error) {
+	return nil, errNotSupported
+}
+
+// AncientSize returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) AncientSize(kind string) (uint64, error) {
+	return 0, errNotSupported
+}
+
+// Ancients returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) Ancients() (uint64, error) {
+	return 0, errNotSupported
+}
+
+// AppendAncient returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) AppendAncient(number uint64, hash, header, body, receipts, td []byte) error {
+	return errNotSupported
+}
+
+// TruncateAncients returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) TruncateAncients(items uint64) error {
+	return errNotSupported
+}
+
+// Sync returns an error as we don't have a backing chain freezer.
+func (db *freezerdb) Sync() error {
+	return errNotSupported
+}
+
+// // Close implements io.Closer, closing both the fast key-value store as well as
+// // the slow ancient tables.
+// func (frdb *freezerdb) Close() error {
+// 	var errs []error
+// 	if err := frdb.KeyValueStore.Close(); err != nil {
+// 		errs = append(errs, err)
+// 	}
+// 	if err := frdb.AncientStore.Close(); err != nil {
+// 		errs = append(errs, err)
+// 	}
+// 	if len(errs) != 0 {
+// 		return fmt.Errorf("%v", errs)
+// 	}
+// 	return nil
+// }
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.
 type nofreezedb struct {
@@ -178,7 +212,10 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	// 	KeyValueStore: db,
 	// 	AncientStore:  frdb,
 	// }, nil
-	return NewDatabase(db), nil
+	// return NewDatabase(db), nil
+	return &freezerdb{
+		KeyValueStore: db,
+	}, nil
 }
 
 // NewMemoryDatabase creates an ephemeral in-memory key-value database without a
