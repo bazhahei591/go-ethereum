@@ -63,9 +63,14 @@ func (b *Batch) Replay(r BatchReplay) error {
 // Put inserts the given value into the batch for later committing.
 func (b *Batch) Put(key []byte, value []byte) error {
 	b.l = append(b.l, BatchItem{command: "SET", key: key, value: value})
+	bpsc := 0
+	logrus.WithFields(logrus.Fields{
+		"set": bpsc,
+	}).Debug("RedisBatchSet")
 	return nil
 }
 
+// Write do all the command in the batch
 func (b *Batch) Write() {
 	dc, sc := 0, 0
 	for _, it := range b.l {
@@ -233,7 +238,7 @@ func (it *RedisIterator) Next() bool {
 		"index": it.index,
 		"key":   it.Key(),
 	}).Trace("RedisIteratorNext")
-	if it.index > 100 {
+	if it.index > 200 {
 		os.Exit(1)
 	}
 	return it.index >= len(it.keysCache)

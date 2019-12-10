@@ -661,6 +661,10 @@ func (b *mybatch) Put(key, value []byte) error {
 		b.lb.b.Put(key, value)
 		b.lb.size += len(value)
 	}
+	logrus.WithFields(logrus.Fields{
+		"lsize": b.lb.size,
+		"rsize": b.rb.size,
+	}).Debug("RedisBatchWrite")
 	return nil
 }
 
