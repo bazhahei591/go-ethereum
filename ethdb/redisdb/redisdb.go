@@ -72,6 +72,7 @@ func (b *Batch) Put(key []byte, value []byte) error {
 
 // Write do all the command in the batch
 func (b *Batch) Write() {
+	New()
 	dc, sc := 0, 0
 	for _, it := range b.l {
 		if it.command == "DEL" {
@@ -122,18 +123,20 @@ func New() *DB {
 // all io accesses to the underlying key-value store.
 func (d *DB) Close() error {
 	// never close
-	return nil
-	// return d.c.Close()
+	// return nil
+	return d.c.Close()
 }
 
 // Has retrieves if a key is present in the key-value store.
 func (d *DB) Has(key []byte) (bool, error) {
+	New()
 	v, err := d.Get(key)
 	return v != nil, err
 }
 
 // Set inserts the given value into the key-value store.
 func (d *DB) Set(key []byte, value []byte) error {
+	New()
 	if d.c.Err() != nil {
 		c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
 		if err != nil {
@@ -158,6 +161,7 @@ func (d *DB) Set(key []byte, value []byte) error {
 
 // Get retrieves the given key if it's present in the key-value store.
 func (d *DB) Get(key []byte) ([]byte, error) {
+	New()
 	value, err := redis.Bytes(d.c.Do("GET", key))
 	if err != nil {
 		return nil, nil
@@ -167,6 +171,7 @@ func (d *DB) Get(key []byte) ([]byte, error) {
 
 // Del removes the key from the key-value data store.
 func (d *DB) Del(key []byte) error {
+	New()
 	_, err := d.c.Do("DEL", key)
 	d.c.Do("SREM", "gs", key)
 	if err != nil {

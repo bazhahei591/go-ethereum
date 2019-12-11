@@ -914,32 +914,32 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 // truncateAncient rewinds the blockchain to the specified header and deletes all
 // data in the ancient store that exceeds the specified header.
 func (bc *BlockChain) truncateAncient(head uint64) error {
-	frozen, err := bc.db.Ancients()
-	if err != nil {
-		return err
-	}
-	// Short circuit if there is no data to truncate in ancient store.
-	if frozen <= head+1 {
-		return nil
-	}
-	// Truncate all the data in the freezer beyond the specified head
-	if err := bc.db.TruncateAncients(head + 1); err != nil {
-		return err
-	}
-	// Clear out any stale content from the caches
-	bc.hc.headerCache.Purge()
-	bc.hc.tdCache.Purge()
-	bc.hc.numberCache.Purge()
+	// frozen, err := bc.db.Ancients()
+	// if err != nil {
+	// 	return err
+	// }
+	// // Short circuit if there is no data to truncate in ancient store.
+	// if frozen <= head+1 {
+	// 	return nil
+	// }
+	// // Truncate all the data in the freezer beyond the specified head
+	// if err := bc.db.TruncateAncients(head + 1); err != nil {
+	// 	return err
+	// }
+	// // Clear out any stale content from the caches
+	// bc.hc.headerCache.Purge()
+	// bc.hc.tdCache.Purge()
+	// bc.hc.numberCache.Purge()
 
-	// Clear out any stale content from the caches
-	bc.bodyCache.Purge()
-	bc.bodyRLPCache.Purge()
-	bc.receiptsCache.Purge()
-	bc.blockCache.Purge()
-	bc.txLookupCache.Purge()
-	bc.futureBlocks.Purge()
+	// // Clear out any stale content from the caches
+	// bc.bodyCache.Purge()
+	// bc.bodyRLPCache.Purge()
+	// bc.receiptsCache.Purge()
+	// bc.blockCache.Purge()
+	// bc.txLookupCache.Purge()
+	// bc.futureBlocks.Purge()
 
-	log.Info("Rewind ancient data", "number", head)
+	// log.Info("Rewind ancient data", "number", head)
 	return nil
 }
 
