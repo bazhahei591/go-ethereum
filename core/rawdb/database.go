@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/olekukonko/tablewriter"
+	"github.com/sirupsen/logrus"
 )
 
 // freezerdb is a database wrapper that enabled freezer data retrievals.
@@ -37,37 +38,37 @@ type freezerdb struct {
 
 // HasAncient returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) HasAncient(kind string, number uint64) (bool, error) {
-	return false, errNotSupported
+	return false, nil
 }
 
 // Ancient returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) Ancient(kind string, number uint64) ([]byte, error) {
-	return nil, errNotSupported
+	return nil, nil
 }
 
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) AncientSize(kind string) (uint64, error) {
-	return 0, errNotSupported
+	return 0, nil
 }
 
 // Ancients returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) Ancients() (uint64, error) {
-	return 0, errNotSupported
+	return 0, nil
 }
 
 // AppendAncient returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) AppendAncient(number uint64, hash, header, body, receipts, td []byte) error {
-	return errNotSupported
+	return nil
 }
 
 // TruncateAncients returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) TruncateAncients(items uint64) error {
-	return errNotSupported
+	return nil
 }
 
 // Sync returns an error as we don't have a backing chain freezer.
 func (db *freezerdb) Sync() error {
-	return errNotSupported
+	return nil
 }
 
 // // Close implements io.Closer, closing both the fast key-value store as well as
@@ -213,6 +214,7 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	// 	AncientStore:  frdb,
 	// }, nil
 	// return NewDatabase(db), nil
+	logrus.Warning("WithFreezer")
 	return &freezerdb{
 		KeyValueStore: db,
 	}, nil
@@ -255,6 +257,7 @@ func NewLevelDBDatabaseWithFreezer(file string, cache int, handles int, freezer 
 	// 	return nil, err
 	// }
 	// return frdb, nil
+	logrus.Warning("WithFreezer")
 	return NewLevelDBDatabase(file, cache, handles, namespace)
 }
 

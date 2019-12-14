@@ -108,7 +108,7 @@ func isStorageShare(key []byte) bool {
 	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
 		return true
 	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
-		return true
+		return false
 	case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
 		return true
 	case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
@@ -186,7 +186,7 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 		DisableSeeksCompaction: true,
 	})
 	// rdb_id = 2
-	rdb := redisdb.New()
+	rdb := redisdb.New(file)
 	// fmt.Println("^^^^^^^^^^^^^", file, namespace)
 
 	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
@@ -273,7 +273,7 @@ func (db *Database) Put(key []byte, value []byte) error {
 		"len(value)": len(value),
 		"shared":     isStorageShare(key),
 		"key":        string(hex.EncodeToString(key)),
-	}).Debug("DatabaseSet")
+	}).Trace("DatabaseSet")
 	if isStorageShare(key) {
 		return db.rdb.Set(key, value)
 	}
@@ -286,7 +286,7 @@ func (db *Database) Delete(key []byte) error {
 		"prefix": string(key[0]),
 		"shared": isStorageShare(key),
 		"key":    string(hex.EncodeToString(key)),
-	}).Debug("DatabaseDelete")
+	}).Info("DatabaseDelete")
 	if isStorageShare(key) {
 		return db.rdb.Del(key)
 	}
@@ -384,7 +384,7 @@ func (c *combIter) Release() {
 func (db *Database) NewIterator() ethdb.Iterator {
 
 	//redis return
-	redisdbIter := redisdb.NewRedisIterator(nil, nil)
+	redisdbIter := db.rdb.NewRedisIterator(nil, nil)
 	//leveldb return
 	leveldbIter := db.db.NewIterator(new(util.Range), nil)
 	//combine
@@ -396,7 +396,7 @@ func (db *Database) NewIterator() ethdb.Iterator {
 // not exist).
 func (db *Database) NewIteratorWithStart(start []byte) ethdb.Iterator {
 
-	redisdbIter := redisdb.NewRedisIterator(start, nil)
+	redisdbIter := db.rdb.NewRedisIterator(start, nil)
 	leveldbIter := db.db.NewIterator(&util.Range{Start: start}, nil)
 
 	return newCombIter(leveldbIter, redisdbIter)
@@ -406,7 +406,7 @@ func (db *Database) NewIteratorWithStart(start []byte) ethdb.Iterator {
 // of database content with a particular key prefix.
 func (db *Database) NewIteratorWithPrefix(prefix []byte) ethdb.Iterator {
 
-	redisdbIter := redisdb.NewRedisIteratorWithPrefix(prefix)
+	redisdbIter := db.rdb.NewRedisIteratorWithPrefix(prefix)
 	leveldbIter := db.db.NewIterator(util.BytesPrefix(prefix), nil)
 	return newCombIter(leveldbIter, redisdbIter)
 }
@@ -664,7 +664,7 @@ func (b *mybatch) Put(key, value []byte) error {
 	logrus.WithFields(logrus.Fields{
 		"lsize": b.lb.size,
 		"rsize": b.rb.size,
-	}).Debug("RedisBatchWrite")
+	}).Debug("RedisBatchPut")
 	return nil
 }
 

@@ -2,8 +2,8 @@ package redisdb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -24,6 +24,7 @@ type BatchItem struct {
 type Batch struct {
 	l []BatchItem
 	p *redis.Pool
+	f string
 }
 
 // BatchReplay wraps basic batch operations.
@@ -35,7 +36,7 @@ type BatchReplay interface {
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (d *DB) NewBatch() *Batch {
-	b := Batch{p: d.p}
+	b := Batch{p: d.p, f: d.f}
 	b.l = make([]BatchItem, 0)
 	return &b
 }
@@ -79,11 +80,11 @@ func (b *Batch) Write() {
 	for _, it := range b.l {
 		if it.command == "DEL" {
 			c.Do(it.command, it.key)
-			c.Do("SREM", "gs", it.key)
+			c.Do("SREM", b.f, it.key)
 			dc++
 		} else {
 			c.Do(it.command, it.key, it.value)
-			c.Do("SADD", "gs", it.key)
+			c.Do("SADD", b.f, it.key)
 			sc++
 		}
 	}
@@ -109,10 +110,11 @@ func (b *Batch) Delete(key []byte) error {
 // DB is a persestent key-value store, contains redis connection
 type DB struct {
 	p *redis.Pool
+	f string
 }
 
 // New returns a wrapped redisDB object.
-func New() *DB {
+func New(file string) *DB {
 	// c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
 	// if err != nil {
 	// 	fmt.Println("connect redis error :", err)
@@ -149,7 +151,7 @@ func New() *DB {
 			return c, nil
 		},
 	}
-	return &DB{pool}
+	return &DB{pool, file}
 }
 
 // Close stops the metrics collection, flushes any pending data to disk and closes
@@ -161,8 +163,9 @@ func (d *DB) Close() error {
 
 // Has retrieves if a key is present in the key-value store.
 func (d *DB) Has(key []byte) (bool, error) {
-	v, err := d.Get(key)
-	return v != nil, err
+	c := d.p.Get()
+	defer c.Close()
+	return redis.Bool(c.Do("SISMEMBER", d.f, key))
 }
 
 // Set inserts the given value into the key-value store.
@@ -174,7 +177,7 @@ func (d *DB) Set(key []byte, value []byte) error {
 		fmt.Println("redis set failed:", err)
 		return err
 	}
-	_, err = c.Do("SADD", "gs", key)
+	_, err = c.Do("SADD", d.f, key)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
 		return err
@@ -186,9 +189,13 @@ func (d *DB) Set(key []byte, value []byte) error {
 func (d *DB) Get(key []byte) ([]byte, error) {
 	c := d.p.Get()
 	defer c.Close()
+	exist, _ := redis.Bool(c.Do("SISMEMBER", d.f, key))
+	if !exist {
+		return nil, errors.New("get from redis not exist for this node")
+	}
 	value, err := redis.Bytes(c.Do("GET", key))
 	if err != nil {
-		return nil, nil
+		return nil, errors.New("get from redis not exist")
 	}
 	return value, nil
 }
@@ -197,8 +204,9 @@ func (d *DB) Get(key []byte) ([]byte, error) {
 func (d *DB) Del(key []byte) error {
 	c := d.p.Get()
 	defer c.Close()
-	_, err := c.Do("DEL", key)
-	c.Do("SREM", "gs", key)
+	// Don't DEL on redis
+	// _, err := c.Do("DEL", key)
+	_, err := c.Do("SREM", d.f, key)
 	if err != nil {
 		fmt.Println("redis delete failed:", err)
 		return err
@@ -211,10 +219,11 @@ type RedisIterator struct {
 	keysCache   [][]byte
 	index       int
 	redisClient redis.Conn
+	f           string
 }
 
 // NewRedisIterator returns the keys from start (included) to limit (not included)
-func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
+func (d *DB) NewRedisIterator(start []byte, limit []byte) *RedisIterator {
 	logrus.Debug("RedisNewIterator")
 	it := new(RedisIterator)
 	c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
@@ -225,8 +234,8 @@ func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
 	it.redisClient = c
 	k := 0
 
-	keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", "gs", "ALPHA"))
-	// keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", "gs", "ALPHA","limit",it.index?,"1"))
+	keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", d.f, "ALPHA"))
+	// keys, _ := redis.ByteSlices(it.redisClient.Do("SORT", d.f, "ALPHA","limit",it.index?,"1"))
 	var emptyByte []byte
 	for i := 0; i < len(keys); i++ {
 		if bytes.Compare(keys[i], start) != 1 {
@@ -241,8 +250,8 @@ func NewRedisIterator(start []byte, limit []byte) *RedisIterator {
 
 // NewRedisIteratorWithPrefix creates a binary-alphabetical iterator over a subset
 // of database content with a particular key prefix.
-func NewRedisIteratorWithPrefix(prefix []byte) *RedisIterator {
-	return NewRedisIterator(prefix, bytesPrefix(prefix))
+func (d *DB) NewRedisIteratorWithPrefix(prefix []byte) *RedisIterator {
+	return d.NewRedisIterator(prefix, bytesPrefix(prefix))
 }
 
 // BytesPrefix returns key range that satisfy the given prefix.
@@ -268,9 +277,6 @@ func (it *RedisIterator) Next() bool {
 		"index": it.index,
 		"key":   it.Key(),
 	}).Trace("RedisIteratorNext")
-	if it.index > 200 {
-		os.Exit(1)
-	}
 	return it.index >= len(it.keysCache)
 }
 
