@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/sirupsen/logrus"
@@ -22,7 +23,7 @@ type BatchItem struct {
 // Batch structure contains a list and redis connection
 type Batch struct {
 	l []BatchItem
-	c redis.Conn
+	p *redis.Pool
 }
 
 // BatchReplay wraps basic batch operations.
@@ -34,7 +35,7 @@ type BatchReplay interface {
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (d *DB) NewBatch() *Batch {
-	b := Batch{c: d.c}
+	b := Batch{p: d.p}
 	b.l = make([]BatchItem, 0)
 	return &b
 }
@@ -72,16 +73,17 @@ func (b *Batch) Put(key []byte, value []byte) error {
 
 // Write do all the command in the batch
 func (b *Batch) Write() {
-	New()
+	c := b.p.Get()
+	defer c.Close()
 	dc, sc := 0, 0
 	for _, it := range b.l {
 		if it.command == "DEL" {
-			b.c.Do(it.command, it.key)
-			b.c.Do("SREM", "gs", it.key)
+			c.Do(it.command, it.key)
+			c.Do("SREM", "gs", it.key)
 			dc++
 		} else {
-			b.c.Do(it.command, it.key, it.value)
-			b.c.Do("SADD", "gs", it.key)
+			c.Do(it.command, it.key, it.value)
+			c.Do("SADD", "gs", it.key)
 			sc++
 		}
 	}
@@ -106,52 +108,73 @@ func (b *Batch) Delete(key []byte) error {
 
 // DB is a persestent key-value store, contains redis connection
 type DB struct {
-	c redis.Conn
+	p *redis.Pool
 }
 
 // New returns a wrapped redisDB object.
 func New() *DB {
-	c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
-	if err != nil {
-		fmt.Println("connect redis error :", err)
-		return nil
+	// c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
+	// if err != nil {
+	// 	fmt.Println("connect redis error :", err)
+	// 	return nil
+	// }
+	// return &DB{c}
+	maxIdle := 30
+	// if v, ok := conf["MaxIdle"]; ok {
+	// 	maxIdle = int(v.(int64))
+	// }
+	maxActive := 1000
+	timeout := 60 * time.Second
+	// if v, ok := conf["MaxActive"]; ok {
+	// 	maxActive = int(v.(int64))
+	// }
+	// MaxIdleTimeout := 60 * time.Second
+	// 建立连接池
+	// conf := config.Get("redis." + name).(*toml.TomlTree)
+	pool := &redis.Pool{
+		MaxIdle:     maxIdle,
+		MaxActive:   maxActive,
+		IdleTimeout: 240 * time.Second,
+		Wait:        true, //如果超过最大连接，是报错，还是等待。
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.Dial("tcp", redisServer,
+				redis.DialPassword(redisPass),
+				redis.DialDatabase(0),
+				redis.DialConnectTimeout(timeout),
+				redis.DialReadTimeout(timeout),
+				redis.DialWriteTimeout(timeout))
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
 	}
-	return &DB{c}
+	return &DB{pool}
 }
 
 // Close stops the metrics collection, flushes any pending data to disk and closes
 // all io accesses to the underlying key-value store.
 func (d *DB) Close() error {
 	// never close
-	// return nil
-	return d.c.Close()
+	return nil
 }
 
 // Has retrieves if a key is present in the key-value store.
 func (d *DB) Has(key []byte) (bool, error) {
-	New()
 	v, err := d.Get(key)
 	return v != nil, err
 }
 
 // Set inserts the given value into the key-value store.
 func (d *DB) Set(key []byte, value []byte) error {
-	New()
-	if d.c.Err() != nil {
-		c, err := redis.Dial("tcp", redisServer, redis.DialDatabase(0), redis.DialPassword(redisPass))
-		if err != nil {
-			logrus.WithField("err", err).Error("ReDial Error")
-		} else {
-			logrus.Warning("ReDial Succeed")
-		}
-		d.c = c
-	}
-	_, err := d.c.Do("SET", key, value)
+	c := d.p.Get()
+	defer c.Close()
+	_, err := c.Do("SET", key, value)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
 		return err
 	}
-	_, err = d.c.Do("SADD", "gs", key)
+	_, err = c.Do("SADD", "gs", key)
 	if err != nil {
 		fmt.Println("redis set failed:", err)
 		return err
@@ -161,8 +184,9 @@ func (d *DB) Set(key []byte, value []byte) error {
 
 // Get retrieves the given key if it's present in the key-value store.
 func (d *DB) Get(key []byte) ([]byte, error) {
-	New()
-	value, err := redis.Bytes(d.c.Do("GET", key))
+	c := d.p.Get()
+	defer c.Close()
+	value, err := redis.Bytes(c.Do("GET", key))
 	if err != nil {
 		return nil, nil
 	}
@@ -171,9 +195,10 @@ func (d *DB) Get(key []byte) ([]byte, error) {
 
 // Del removes the key from the key-value data store.
 func (d *DB) Del(key []byte) error {
-	New()
-	_, err := d.c.Do("DEL", key)
-	d.c.Do("SREM", "gs", key)
+	c := d.p.Get()
+	defer c.Close()
+	_, err := c.Do("DEL", key)
+	c.Do("SREM", "gs", key)
 	if err != nil {
 		fmt.Println("redis delete failed:", err)
 		return err
