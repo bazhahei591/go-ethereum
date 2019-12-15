@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethdb/shared"
 	"github.com/gomodule/redigo/redis"
 	"github.com/sirupsen/logrus"
 )
 
-const redisServer = "127.0.0.1:6379"
+const redisServer = "127.0.0.1:16379"
 const redisPass = "gaojiachenisbazhahei"
+const telemetryServer = "127.0.0.1:6379"
+const telemetryPass = "gaojiachenisbazhahei"
+const telemetryDb = 1
 
 // BatchItem is the structure of redis command items
 type BatchItem struct {
@@ -23,7 +27,7 @@ type BatchItem struct {
 // Batch structure contains a list and redis connection
 type Batch struct {
 	l []BatchItem
-	p *redis.Pool
+	d *DB
 	f string
 }
 
@@ -36,7 +40,7 @@ type BatchReplay interface {
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (d *DB) NewBatch() *Batch {
-	b := Batch{p: d.p, f: d.f}
+	b := Batch{d: d, f: d.f}
 	b.l = make([]BatchItem, 0)
 	return &b
 }
@@ -74,17 +78,14 @@ func (b *Batch) Put(key []byte, value []byte) error {
 
 // Write do all the command in the batch
 func (b *Batch) Write() {
-	c := b.p.Get()
-	defer c.Close()
 	dc, sc := 0, 0
 	for _, it := range b.l {
 		if it.command == "DEL" {
-			c.Do(it.command, it.key)
-			c.Do("SREM", b.f, it.key)
+			b.d.Del(it.key)
 			dc++
-		} else {
-			c.Do(it.command, it.key, it.value)
-			c.Do("SADD", b.f, it.key)
+		}
+		if it.command == "SET" {
+			b.d.Set(it.key, it.value)
 			sc++
 		}
 	}
@@ -109,8 +110,9 @@ func (b *Batch) Delete(key []byte) error {
 
 // DB is a persestent key-value store, contains redis connection
 type DB struct {
-	p *redis.Pool
-	f string
+	p  *redis.Pool // for data storage
+	tp *redis.Pool // for telemetry
+	f  string
 }
 
 // New returns a wrapped redisDB object.
@@ -151,7 +153,22 @@ func New(file string) *DB {
 			return c, nil
 		},
 	}
-	return &DB{pool, file}
+	telemetryPool := &redis.Pool{
+		MaxIdle:     maxIdle,
+		MaxActive:   maxActive,
+		IdleTimeout: 240 * time.Second,
+		Wait:        true, //如果超过最大连接，是报错，还是等待。
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.Dial("tcp", telemetryServer,
+				redis.DialPassword(telemetryPass),
+				redis.DialDatabase(telemetryDb))
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
+	}
+	return &DB{pool, telemetryPool, file}
 }
 
 // Close stops the metrics collection, flushes any pending data to disk and closes
@@ -165,6 +182,12 @@ func (d *DB) Close() error {
 func (d *DB) Has(key []byte) (bool, error) {
 	c := d.p.Get()
 	defer c.Close()
+	tc := d.tp.Get()
+	defer tc.Close()
+	keyType, _ := shared.KeyType(key)
+	tc.Do("INCR", "has-"+d.f)
+	tc.Do("INCR", "has-"+keyType)
+	tc.Do("INCR", "has-"+keyType+d.f)
 	return redis.Bool(c.Do("SISMEMBER", d.f, key))
 }
 
@@ -172,14 +195,41 @@ func (d *DB) Has(key []byte) (bool, error) {
 func (d *DB) Set(key []byte, value []byte) error {
 	c := d.p.Get()
 	defer c.Close()
-	_, err := c.Do("SET", key, value)
-	if err != nil {
-		fmt.Println("redis set failed:", err)
-		return err
+	tc := d.tp.Get()
+	defer tc.Close()
+	keyType, _ := shared.KeyType(key)
+	tc.Do("INCR", "set-"+d.f)
+	tc.Do("INCR", "set-"+keyType)
+	tc.Do("INCR", "set-"+keyType+d.f)
+	exist, err := redis.Bool(c.Do("EXISTS", key))
+	if exist { // for debug use, should be delete
+		getValue, err := redis.Bytes(c.Do("GET", key))
+		if err != nil || !bytes.Equal(getValue, value) {
+			logrus.WithFields(logrus.Fields{
+				"key":           fmt.Sprintf("%s", key),
+				"valueGet":      getValue,
+				"valueSet":      value,
+				"len(key)":      len(key),
+				"len(valueGet)": len(getValue),
+				"len(valueSet)": len(value),
+				"err":           err,
+			}).Error("get set not equal")
+			//os.Exit(1) // may be cased by replayer
+			exist = false // WARNING: TODO: to update data
+			tc.Do("INCR", "error-getsetnotequal-"+d.f)
+			tc.Do("INCR", "error-getsetnotequal")
+		}
+	}
+	if !exist {
+		_, err := c.Do("SET", key, value)
+		if err != nil {
+			fmt.Println("redis set failed:", err)
+			return err
+		}
 	}
 	_, err = c.Do("SADD", d.f, key)
 	if err != nil {
-		fmt.Println("redis set failed:", err)
+		fmt.Println("redis sadd failed:", err)
 		return err
 	}
 	return nil
@@ -189,6 +239,12 @@ func (d *DB) Set(key []byte, value []byte) error {
 func (d *DB) Get(key []byte) ([]byte, error) {
 	c := d.p.Get()
 	defer c.Close()
+	tc := d.tp.Get()
+	defer tc.Close()
+	keyType, _ := shared.KeyType(key)
+	tc.Do("INCR", "get-"+d.f)
+	tc.Do("INCR", "get-"+keyType)
+	tc.Do("INCR", "get-"+keyType+d.f)
 	exist, _ := redis.Bool(c.Do("SISMEMBER", d.f, key))
 	if !exist {
 		return nil, errors.New("get from redis not exist for this node")
@@ -204,6 +260,12 @@ func (d *DB) Get(key []byte) ([]byte, error) {
 func (d *DB) Del(key []byte) error {
 	c := d.p.Get()
 	defer c.Close()
+	tc := d.tp.Get()
+	defer tc.Close()
+	keyType, _ := shared.KeyType(key)
+	tc.Do("INCR", "del-"+d.f)
+	tc.Do("INCR", "del-"+keyType)
+	tc.Do("INCR", "del-"+keyType+d.f)
 	// Don't DEL on redis
 	// _, err := c.Do("DEL", key)
 	_, err := c.Do("SREM", d.f, key)

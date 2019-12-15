@@ -23,7 +23,6 @@ package leveldb
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/redisdb"
+	"github.com/ethereum/go-ethereum/ethdb/shared"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -63,40 +63,6 @@ const (
 )
 
 var (
-	// databaseVerisionKey tracks the current database version.
-	databaseVerisionKey = []byte("DatabaseVersion")
-
-	// headHeaderKey tracks the latest known header's hash.
-	headHeaderKey = []byte("LastHeader")
-
-	// headBlockKey tracks the latest known full block's hash.
-	headBlockKey = []byte("LastBlock")
-
-	// headFastBlockKey tracks the latest known incomplete block's hash during fast sync.
-	headFastBlockKey = []byte("LastFast")
-
-	// fastTrieProgressKey tracks the number of trie entries imported during fast sync.
-	fastTrieProgressKey = []byte("TrieSync")
-
-	// Data item prefixes (use single byte to avoid mixing data types, avoid `i`, used for indexes).
-	headerPrefix       = []byte("h") // headerPrefix + num (uint64 big endian) + hash -> header
-	headerTDSuffix     = []byte("t") // headerPrefix + num (uint64 big endian) + hash + headerTDSuffix -> td
-	headerHashSuffix   = []byte("n") // headerPrefix + num (uint64 big endian) + headerHashSuffix -> hash
-	headerNumberPrefix = []byte("H") // headerNumberPrefix + hash -> num (uint64 big endian)
-
-	blockBodyPrefix     = []byte("b") // blockBodyPrefix + num (uint64 big endian) + hash -> block body
-	blockReceiptsPrefix = []byte("r") // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
-
-	txLookupPrefix  = []byte("l") // txLookupPrefix + hash -> transaction/receipt lookup metadata
-	bloomBitsPrefix = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
-
-	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
-	configPrefix   = []byte("ethereum-config-") // config prefix for the db
-
-	// Chain index prefixes (use `i` + single byte to avoid mixing data types).
-
-	// BloomBitsIndexPrefix is the data table of a chain indexer to track its progress
-	BloomBitsIndexPrefix = []byte("iB")
 
 	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
@@ -104,36 +70,8 @@ var (
 
 // choose which key-value to be shared, which means use redis to store
 func isStorageShare(key []byte) bool {
-	switch {
-	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
-		return true
-	case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
-		return false
-	case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, preimagePrefix) && len(key) == (len(preimagePrefix)+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
-		return true
-	case bytes.HasPrefix(key, []byte("clique-")) && len(key) == 7+common.HashLength:
-		return true
-	case bytes.HasPrefix(key, []byte("cht-")) && len(key) == 4+common.HashLength:
-		return true
-	case bytes.HasPrefix(key, []byte("blt-")) && len(key) == 4+common.HashLength:
-		return true
-	case len(key) == common.HashLength:
-		return true
-	default:
-		return false
-	}
+	_, share := shared.KeyType(key)
+	return share
 }
 
 // Database is a persistent key-value store. Apart from basic data storage
@@ -250,9 +188,8 @@ func (db *Database) Has(key []byte) (bool, error) {
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
 	logrus.WithFields(logrus.Fields{
-		"prefix": string(key[0]),
 		"shared": isStorageShare(key),
-		"key":    string(hex.EncodeToString(key)),
+		"key":    fmt.Sprintf("%s", key),
 	}).Trace("DatabaseGet")
 	if isStorageShare(key) {
 		return db.rdb.Get(key)
@@ -268,11 +205,10 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
 	logrus.WithFields(logrus.Fields{
-		"perfix":     string(key[0]),
 		"len(key)":   len(key),
 		"len(value)": len(value),
 		"shared":     isStorageShare(key),
-		"key":        string(hex.EncodeToString(key)),
+		"key":        fmt.Sprintf("%s", key),
 	}).Trace("DatabaseSet")
 	if isStorageShare(key) {
 		return db.rdb.Set(key, value)
@@ -283,9 +219,8 @@ func (db *Database) Put(key []byte, value []byte) error {
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
 	logrus.WithFields(logrus.Fields{
-		"prefix": string(key[0]),
 		"shared": isStorageShare(key),
-		"key":    string(hex.EncodeToString(key)),
+		"key":    fmt.Sprintf("%s", key),
 	}).Info("DatabaseDelete")
 	if isStorageShare(key) {
 		return db.rdb.Del(key)
