@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -486,8 +487,10 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			// eclipse attacks. Unsynced nodes are welcome to connect after we're done
 			// joining the network
 			if atomic.LoadUint32(&pm.fastSync) == 1 {
-				p.Log().Warn("Dropping unsynced node during fast sync", "addr", p.RemoteAddr(), "type", p.Name())
-				return errors.New("unsynced node cannot serve fast sync")
+				if !strings.Contains(p.RemoteAddr().String(), "127.0.0.1") {
+					p.Log().Warn("Dropping unsynced node during fast sync", "addr", p.RemoteAddr(), "type", p.Name())
+					return errors.New("unsynced node cannot serve fast sync")
+				}
 			}
 		}
 		// Filter out any explicitly requested headers, deliver the rest to the downloader
